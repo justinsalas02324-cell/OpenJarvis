@@ -42,7 +42,8 @@ class TextToSpeechTool(BaseTool):
                     "backend": {
                         "type": "string",
                         "description": (
-                            "TTS backend (cartesia, elevenlabs, kokoro, openai_tts)."
+                            "TTS backend (cartesia, elevenlabs, fish_audio, "
+                            "kokoro, openai_tts)."
                         ),
                     },
                     "output_dir": {

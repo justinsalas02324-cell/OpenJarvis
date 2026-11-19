@@ -957,3 +957,97 @@ def test_elevenlabs_missing_key_raises(monkeypatch):
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="ELEVENLABS_API_KEY"):
         ElevenLabsTTSBackend().synthesize("Hello")
+
+
+# ---------------------------------------------------------------------------
+# Fish Audio backend tests
+# ---------------------------------------------------------------------------
+
+
+def test_fish_audio_registered():
+    from openjarvis.speech.fish_audio_tts import FishAudioTTSBackend
+
+    TTSRegistry.register_value("fish_audio", FishAudioTTSBackend)
+    assert TTSRegistry.contains("fish_audio")
+
+
+def test_fish_audio_requires_api_key(monkeypatch):
+    monkeypatch.delenv("FISH_AUDIO_API_KEY", raising=False)
+    from openjarvis.speech.fish_audio_tts import FishAudioTTSBackend
+
+    backend = FishAudioTTSBackend()
+    assert backend.health() is False
+    with pytest.raises(RuntimeError):
+        backend.synthesize("Hola")
+
+
+def test_fish_audio_synthesize():
+    from openjarvis.speech.fish_audio_tts import FishAudioTTSBackend
+
+    backend = FishAudioTTSBackend(api_key="fake-key")
+
+    with patch(
+        "openjarvis.speech.fish_audio_tts._fish_synthesize",
+        return_value=b"fake-audio-mp3-bytes",
+    ):
+        result = backend.synthesize("Hola", voice_id="voice-1")
+
+    assert result.audio == b"fake-audio-mp3-bytes"
+    assert result.format == "mp3"
+    assert result.voice_id == "voice-1"
+    assert backend.health() is True
+
+
+@pytest.mark.parametrize("speed,expected", [(1.0, None), (1.25, 1.25), (5.0, 2.0)])
+def test_fish_audio_request_shape(speed, expected):
+    from openjarvis.speech import fish_audio_tts
+
+    captured: dict = {}
+
+    class _Resp:
+        content = b"audio-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, *, headers, json, timeout):
+        captured.update(url=url, headers=headers, json=json)
+        return _Resp()
+
+    with patch.object(fish_audio_tts.httpx, "post", side_effect=fake_post):
+        out = fish_audio_tts._fish_synthesize(
+            "fake-key", "Hola", "voice-1", model="s1", speed=speed
+        )
+
+    assert out == b"audio-bytes"
+    assert captured["url"] == "https://api.fish.audio/v1/tts"
+    assert captured["headers"]["Authorization"] == "Bearer fake-key"
+    assert captured["headers"]["model"] == "s1"
+    assert captured["json"]["reference_id"] == "voice-1"
+    assert captured["json"]["format"] == "mp3"
+    if expected is None:
+        assert "prosody" not in captured["json"]
+    else:
+        assert captured["json"]["prosody"] == {"speed": expected}
+
+
+def test_fish_audio_omits_model_and_voice_when_unset():
+    from openjarvis.speech import fish_audio_tts
+
+    captured: dict = {}
+
+    class _Resp:
+        content = b"x"
+
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, *, headers, json, timeout):
+        captured.update(headers=headers, json=json)
+        return _Resp()
+
+    with patch.object(fish_audio_tts.httpx, "post", side_effect=fake_post):
+        fish_audio_tts._fish_synthesize("fake-key", "Hola")
+
+    assert "model" not in captured["headers"]
+    assert "reference_id" not in captured["json"]
